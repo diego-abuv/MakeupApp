@@ -58,9 +58,12 @@ export class AsaasGateway implements GatewayPagamento {
       );
     }
 
+    const url = `${this.apiUrl}${path}`;
+    this.logger.log(`ASAAS ${method} ${url}`);
+
     let resposta: Response;
     try {
-      resposta = await fetch(`${this.apiUrl}${path}`, {
+      resposta = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -68,6 +71,7 @@ export class AsaasGateway implements GatewayPagamento {
           'User-Agent': 'MakeupApp/1.0',
         },
         body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(15_000),
       });
     } catch (erro) {
       this.logger.error(
@@ -84,7 +88,7 @@ export class AsaasGateway implements GatewayPagamento {
         `Asaas ${method} ${path} respondeu ${resposta.status}: ${texto}`,
       );
       throw new InternalServerErrorException(
-        'Falha ao processar a cobrança no gateway',
+        `Falha no gateway: ${resposta.status} ${resposta.statusText}`,
       );
     }
 
@@ -102,6 +106,9 @@ export class AsaasGateway implements GatewayPagamento {
       );
     }
 
+    this.logger.log(
+      `criaCobranca: criando customer para ${input.pagador.nome} (cpf=${input.pagador.cpf})`,
+    );
     const cliente = await this.requisitar<AsaasCustomerResponse>(
       'POST',
       '/v3/customers',
@@ -115,6 +122,9 @@ export class AsaasGateway implements GatewayPagamento {
       },
     );
 
+    this.logger.log(
+      `criaCobranca: customer ${cliente.id} criado, criando pagamento PIX de R$${input.valor}`,
+    );
     const pagamento = await this.requisitar<AsaasPaymentResponse>(
       'POST',
       '/v3/payments',
@@ -128,6 +138,9 @@ export class AsaasGateway implements GatewayPagamento {
       },
     );
 
+    this.logger.log(
+      `criaCobranca: pagamento ${pagamento.id} criado, busando QR code`,
+    );
     const qr = await this.requisitar<AsaasPixQrResponse>(
       'GET',
       `/v3/payments/${pagamento.id}/pixQrCode`,

@@ -56,21 +56,27 @@ export default function PixSinal({
     "confirmado" | "expirado" | null
   >(null);
 
-  const buscarPix = useCallback(async () => {
-    setCarregando(true);
-    setErro(null);
-    try {
-      const dados = await gerarPix(agendamentoId);
-      setPix(dados);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível gerar o Pix");
-    } finally {
-      setCarregando(false);
-    }
-  }, [agendamentoId]);
+  const buscarPix = useCallback(
+    async (signal?: AbortSignal) => {
+      setCarregando(true);
+      setErro(null);
+      try {
+        const dados = await gerarPix(agendamentoId, signal);
+        setPix(dados);
+      } catch (e) {
+        if (signal?.aborted) return;
+        setErro(e instanceof Error ? e.message : "Não foi possível gerar o Pix");
+      } finally {
+        if (!signal?.aborted) setCarregando(false);
+      }
+    },
+    [agendamentoId],
+  );
 
   useEffect(() => {
-    buscarPix();
+    const controller = new AbortController();
+    buscarPix(controller.signal);
+    return () => controller.abort();
   }, [buscarPix]);
 
   useEffect(() => {
@@ -146,7 +152,7 @@ export default function PixSinal({
       <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
         {erro}
         <button
-          onClick={buscarPix}
+          onClick={() => buscarPix()}
           className="mt-2 w-full rounded-lg border border-red-500 px-3 py-2 text-xs text-red-300 transition hover:bg-red-500/10"
         >
           Tentar novamente
@@ -205,7 +211,7 @@ export default function PixSinal({
 
       {expiradoPix && (
         <button
-          onClick={buscarPix}
+          onClick={() => buscarPix()}
           disabled={carregando}
           className="mt-4 w-full rounded-xl border border-rose-500 px-4 py-3 text-sm font-semibold text-rose-400 transition hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-40"
         >

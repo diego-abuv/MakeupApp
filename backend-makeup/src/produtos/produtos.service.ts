@@ -63,9 +63,26 @@ export class ProdutosService {
   }
 
   async listarProdutos(): Promise<ProdutoResumo[]> {
-    const compras = await this.listarCompras();
+    const [compras, produtosRows] = await Promise.all([
+      this.listarCompras(),
+      this.supabase.from('produtos').select('id, nome, categoria, unidade'),
+    ]);
 
     const mapa = new Map<string, ProdutoResumo>();
+
+    for (const p of produtosRows.data ?? []) {
+      mapa.set(p.id, {
+        id: p.id,
+        nome: p.nome,
+        categoria: p.categoria ?? null,
+        unidade: p.unidade ?? null,
+        gastoEncerrado: 0,
+        pessoasAtendidas: 0,
+        quantidadeEncerrada: 0,
+        custoPorPessoa: null,
+        lotesAbertos: 0,
+      });
+    }
 
     for (const compra of compras) {
       let resumo = mapa.get(compra.produtoId);

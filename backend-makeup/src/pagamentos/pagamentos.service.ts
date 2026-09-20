@@ -65,8 +65,8 @@ export class PagamentosService {
   private async gravarPix(
     agendamentoId: string,
     cobranca: CobrancaCriada,
-  ): Promise<void> {
-    const { error } = await this.supabase
+  ): Promise<boolean> {
+    const { data, error } = await this.supabase
       .from('agendamentos')
       .update({
         gateway_payment_id: cobranca.gatewayPaymentId,
@@ -75,7 +75,9 @@ export class PagamentosService {
         pix_copia_cola: cobranca.copiaECola,
         pix_expiracao: cobranca.expiraEm,
       })
-      .eq('id', agendamentoId);
+      .eq('id', agendamentoId)
+      .is('pix_qr_base64', null)
+      .select('id');
 
     if (error) {
       this.logger.error(
@@ -85,6 +87,8 @@ export class PagamentosService {
         'Erro ao salvar a cobrança do sinal',
       );
     }
+
+    return (data?.length ?? 0) > 0;
   }
 
   private montarResposta(
@@ -123,6 +127,29 @@ export class PagamentosService {
       return this.montarResposta(agendamento);
     }
 
+    // CLAIM: tenta marcar como "criando" — só succeed se ninguém mais marcou
+    const { data: claimed } = await this.supabase
+      .from('agendamentos')
+      .update({ gateway_payment_id: 'creating' })
+      .eq('id', agendamentoId)
+      .is('gateway_payment_id', null)
+      .select('id');
+
+    if (!claimed || claimed.length === 0) {
+      const atual = await this.buscarAgendamento(agendamentoId);
+      if (atual.gateway_payment_id === 'creating') {
+        throw new BadRequestException(
+          'Pagamento já está sendo processado. Aguarde alguns segundos.',
+        );
+      } else if (atual.pix_qr_base64 && atual.pix_expiracao && new Date(atual.pix_expiracao).getTime() > Date.now()) {
+        return this.montarResposta(atual);
+      } else {
+        throw new BadRequestException(
+          'Não foi possível iniciar o pagamento. Tente novamente.',
+        );
+      }
+    }
+
     const input: CriarCobrancaInput = {
       valor: Number(agendamento.sinal_valor ?? 0),
       vencimento: formatInTimeZone(new Date(), FUSO_HORARIO, 'yyyy-MM-dd'),
@@ -135,8 +162,30 @@ export class PagamentosService {
       },
     };
 
-    const cobranca = await this.gateway.criaCobranca(input);
-    await this.gravarPix(agendamento.id, cobranca);
+    let cobranca: CobrancaCriada;
+    try {
+      cobranca = await this.gateway.criaCobranca(input);
+    } catch (erro) {
+      this.logger.error(
+        `Falha ao criar cobrança no ASAAS para ${agendamentoId}: ${String(erro)}`,
+      );
+      await this.supabase
+        .from('agendamentos')
+        .update({ gateway_payment_id: null })
+        .eq('id', agendamentoId)
+        .eq('gateway_payment_id', 'creating');
+      throw erro;
+    }
+
+    const salvou = await this.gravarPix(agendamento.id, cobranca);
+
+    if (!salvou) {
+      this.logger.warn(
+        `Concorrência em gerarPix(${agendamentoId}): cobrança ${cobranca.gatewayPaymentId} descartada`,
+      );
+      const refreshed = await this.buscarAgendamento(agendamentoId);
+      return this.montarResposta(refreshed);
+    }
 
     return this.montarResposta({
       ...agendamento,

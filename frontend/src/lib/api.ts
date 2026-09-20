@@ -249,10 +249,11 @@ export async function criarAgendamento(payload: {
   return handleResponse(res);
 }
 
-export async function gerarPix(agendamentoId: string): Promise<PixSinal> {
+export async function gerarPix(agendamentoId: string, signal?: AbortSignal): Promise<PixSinal> {
   const res = await fetch(`${API_URL}/agendamentos/${agendamentoId}/pix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal,
   });
   return handleResponse(res);
 }
